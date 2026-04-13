@@ -36,7 +36,6 @@ public class IncidentEvent {
     @Column(nullable = false)
     private ActorType actorType;
 
-
     private Long actorId;
 
     @Column(columnDefinition = "TEXT")

@@ -6,7 +6,6 @@ import com.example.queuepilot.incident_api.api.dto.request.ResolveIncidentReques
 import com.example.queuepilot.incident_api.api.dto.response.IncidentResponse;
 import com.example.queuepilot.incident_api.service.IncidentService;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -37,11 +36,22 @@ public class IncidentController {
         return incidentService.getAllIncidents();
     }
 
+
+    @PatchMapping("/{id}/start")
+    public IncidentResponse startIncident(@PathVariable Long id) {
+        return incidentService.startIncident(id);
+    }
+
+    @PatchMapping("/{id}/close")
+    public IncidentResponse closeIncident(@PathVariable Long id) {
+        return incidentService.closeIncident(id);
+    }
+
     @PatchMapping("/{id}/acknowledge")
     public IncidentResponse acknowledgeIncident(@PathVariable Long id) {
         return incidentService.acknowledgeIncident(id);
     }
-    @PatchMapping("{id}/assign")
+    @PatchMapping("/{id}/assign")
     public IncidentResponse assignIncident(@PathVariable Long id,
                                            @RequestBody @Valid AssignIncidentRequest request) {
         return incidentService.assignIncident(id, request);

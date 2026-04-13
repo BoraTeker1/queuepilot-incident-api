@@ -15,16 +15,16 @@ import com.example.queuepilot.incident_api.domain.enums.IncidentStatus;
 import com.example.queuepilot.incident_api.exception.DuplicateResourceException;
 import com.example.queuepilot.incident_api.exception.InvalidStateException;
 import com.example.queuepilot.incident_api.exception.ResourceNotFoundException;
+import com.example.queuepilot.incident_api.messaging.IncidentCreatedEvent;
+import com.example.queuepilot.incident_api.messaging.IncidentEventPublisher;
 import com.example.queuepilot.incident_api.repository.IncidentEventRepository;
 import com.example.queuepilot.incident_api.repository.IncidentRepository;
 import com.example.queuepilot.incident_api.repository.ServiceEntityRepository;
 import com.example.queuepilot.incident_api.repository.UserRepository;
-import jakarta.transaction.TransactionScoped;
 import jakarta.transaction.Transactional;
-import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
-import java.time.LocalDate;
+import org.springframework.stereotype.Service;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -36,11 +36,28 @@ public class IncidentService {
 
     private final UserRepository userRepository;
 
-    public IncidentService(IncidentRepository incidentRepository, IncidentEventRepository incidentEventRepository, ServiceEntityRepository serviceEntityRepository, UserRepository userRepository) {
+    private final IncidentEventPublisher incidentEventPublisher;
+
+    public IncidentService(IncidentRepository incidentRepository, IncidentEventRepository incidentEventRepository, ServiceEntityRepository serviceEntityRepository, UserRepository userRepository, IncidentEventPublisher incidentEventPublisher) {
         this.incidentRepository = incidentRepository;
         this.incidentEventRepository = incidentEventRepository;
         this.serviceEntityRepository = serviceEntityRepository;
         this.userRepository = userRepository;
+        this.incidentEventPublisher = incidentEventPublisher;
+    }
+
+    private void validateStatusTransition(IncidentStatus current, IncidentStatus target) {
+        boolean isValid =
+                (current == IncidentStatus.OPEN && target == IncidentStatus.ACKNOWLEDGED) ||
+                        (current == IncidentStatus.ACKNOWLEDGED && target == IncidentStatus.IN_PROGRESS) ||
+                        (current == IncidentStatus.IN_PROGRESS && target == IncidentStatus.RESOLVED) ||
+                        (current == IncidentStatus.ACKNOWLEDGED && target == IncidentStatus.RESOLVED) ||
+                        (current == IncidentStatus.RESOLVED && target == IncidentStatus.CLOSED);
+
+        if (!isValid) {
+            throw new InvalidStateException(
+                    "Invalid status transition from " + current + " to " + target);
+        }
     }
 
     @Transactional
@@ -77,6 +94,7 @@ public class IncidentService {
         incidentEvent.setCreatedAt(now);
 
         incidentEventRepository.save(incidentEvent);
+        incidentEventPublisher.publishIncidentCreated(savedIncident);
 
         return mapToResponse(savedIncident);
 
@@ -101,9 +119,7 @@ public class IncidentService {
         Incident incident = incidentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Incident not found with id: " + id));
 
-        if (incident.getStatus() != IncidentStatus.OPEN) {
-            throw new InvalidStateException("Only OPEN incidents can be acknowledged");
-        }
+        validateStatusTransition(incident.getStatus(), IncidentStatus.ACKNOWLEDGED);
         LocalDateTime now = LocalDateTime.now();
         incident.setStatus(IncidentStatus.ACKNOWLEDGED);
         incident.setAcknowledgedAt(now);
@@ -125,11 +141,64 @@ public class IncidentService {
         return mapToResponse(savedIncident);
     }
 
+    @Transactional
+    public IncidentResponse startIncident(Long incidentId) {
+        Incident incident = incidentRepository.findById(incidentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Incident not found with the id: " + incidentId));
+
+        validateStatusTransition(incident.getStatus(), IncidentStatus.IN_PROGRESS);
+        LocalDateTime now = LocalDateTime.now();
+        incident.setStatus(IncidentStatus.IN_PROGRESS);
+        incident.setUpdatedAt(now);
+
+        Incident savedIncident = incidentRepository.save(incident);
+        IncidentEvent incidentEvent = new IncidentEvent();
+        incidentEvent.setIncident(savedIncident);
+        incidentEvent.setEventType(EventType.STATUS_CHANGED);
+        incidentEvent.setActorType(ActorType.SYSTEM);
+        incidentEvent.setActorId(null);
+        incidentEvent.setDetails("Incident moved to IN_PROGRESS");
+        incidentEvent.setCreatedAt(now);
+
+        incidentEventRepository.save(incidentEvent);
+
+        return mapToResponse(savedIncident);
+    }
+
+    @Transactional
+    public IncidentResponse closeIncident(Long incidentId) {
+        Incident incident = incidentRepository.findById(incidentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Incident not found with the id: " + incidentId));
+        validateStatusTransition(incident.getStatus(), IncidentStatus.CLOSED);
+        LocalDateTime now = LocalDateTime.now();
+
+        incident.setStatus(IncidentStatus.CLOSED);
+        incident.setUpdatedAt(now);
+
+        Incident savedIncident = incidentRepository.save(incident);
+
+        IncidentEvent incidentEvent = new IncidentEvent();
+        incidentEvent.setIncident(savedIncident);
+        incidentEvent.setEventType(EventType.STATUS_CHANGED);
+        incidentEvent.setActorType(ActorType.SYSTEM);
+        incidentEvent.setActorId(null);
+        incidentEvent.setDetails("Incident closed");
+        incidentEvent.setCreatedAt(now);
+
+        incidentEventRepository.save(incidentEvent);
+        return mapToResponse(savedIncident);
+    }
+
 
     @Transactional
     public IncidentResponse assignIncident(Long incidentId, AssignIncidentRequest request) {
         Incident incident = incidentRepository.findById(incidentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Incident not found with the id: " + incidentId));
+
+
+        if (incident.getStatus() == IncidentStatus.RESOLVED || incident.getStatus() == IncidentStatus.CLOSED) {
+            throw new InvalidStateException("Resolved or closed incidents cannot be assigned");
+        }
 
         User user = userRepository.findById(request.getUserId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with id:" + request.getUserId()));
@@ -158,9 +227,7 @@ public class IncidentService {
         Incident incident = incidentRepository.findById(incidentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Incident not found with id: " + incidentId));
 
-        if (incident.getStatus() != IncidentStatus.ACKNOWLEDGED && incident.getStatus() != IncidentStatus.IN_PROGRESS) {
-            throw new InvalidStateException("Only Acknowledged or In progress incidents can be resolved");
-        }
+        validateStatusTransition(incident.getStatus(), IncidentStatus.RESOLVED);
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -213,6 +280,8 @@ public class IncidentService {
         }
         return response;
         }
+
+
 
 
 
