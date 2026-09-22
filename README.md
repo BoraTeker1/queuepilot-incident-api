@@ -1,13 +1,13 @@
-# QueuePilot — Incident API
+# QueuePilot Incident API
 
 A Spring Boot service for tracking operational incidents through a controlled lifecycle:
 create, acknowledge, assign, start, resolve, close. Every transition is validated against an
 explicit state machine, every change appends an immutable event to an audit trail, and
 incident creation publishes a Kafka event for downstream consumers.
 
-Built to practise the parts of backend work that are easy to skip in a CRUD tutorial —
-illegal state transitions, duplicate suppression, structured error responses, and an audit
-log that is appended to rather than overwritten.
+Built to practise the parts of backend work that a CRUD tutorial tends to skip: illegal
+state transitions, duplicate suppression, structured error responses, and an audit log that
+is appended to rather than overwritten.
 
 ## Stack
 
@@ -18,7 +18,7 @@ Java 21 · Spring Boot 3.3.5 · Spring Data JPA · Spring Kafka · Bean Validati
 | Entity | Purpose |
 |---|---|
 | `Incident` | The tracked incident: title, description, severity, status, source, optional dedupe key, assignee, owning service, lifecycle timestamps. |
-| `ServiceEntity` | The service an incident belongs to — owning team, tier, SLA minutes, runbook URL. |
+| `ServiceEntity` | The service an incident belongs to, with owning team, tier, SLA minutes and runbook URL. |
 | `User` | Assignable person with a role (`ADMIN`, `SRE`, `ENGINEER`, `VIEWER`) and team. |
 | `IncidentEvent` | Append-only audit record: what happened, which actor type caused it, and when. |
 
@@ -27,7 +27,7 @@ Enums: `Severity` (CRITICAL/HIGH/MEDIUM/LOW), `IncidentStatus`, `IncidentSource`
 
 ## Status machine
 
-`validateStatusTransition` in `IncidentService` is the single gate — a transition not on this
+`validateStatusTransition` in `IncidentService` is the single gate. A transition not on this
 list throws `InvalidStateException` and the request returns 400 rather than silently
 corrupting the incident's state.
 
@@ -67,7 +67,7 @@ incident, not two hundred.
 
 Every mutating operation writes an `IncidentEvent` (`CREATED`, `ACKNOWLEDGED`, `ASSIGNED`,
 `STATUS_CHANGED`, `RESOLVED`) alongside the state change, inside the same transaction.
-Events are only ever inserted — nothing rewrites history, so the sequence of what happened
+Events are only ever inserted. Nothing rewrites history, so the sequence of what happened
 to an incident stays reconstructable.
 
 ### Error responses
@@ -80,8 +80,8 @@ to an incident stays reconstructable.
 | `ResourceNotFoundException` | 404 Not Found |
 | `DuplicateResourceException` | 409 Conflict |
 | `InvalidStateException` | 400 Bad Request |
-| `MethodArgumentNotValidException` | 400 — field validation messages joined |
-| `HttpMessageNotReadableException` | 400 — malformed JSON |
+| `MethodArgumentNotValidException` | 400, field validation messages joined |
+| `HttpMessageNotReadableException` | 400, malformed JSON |
 | `ConstraintViolationException` | 400 |
 | `Exception` | 500 |
 
@@ -127,7 +127,7 @@ These are real and worth naming rather than discovering later:
 
 - **Tests are a stub.** The only test is the generated `contextLoads`, and it needs the
   datasource and broker configuration above to pass. There is no coverage of the status
-  machine or the dedupe path — those are the first things that should be tested.
+  machine or the dedupe path, which are the first things that should be tested.
 - **No authentication model.** Security is unconfigured defaults; there is no login, and
   `actorId` on every audit event is written as `null` with `ActorType.SYSTEM`, because
   there is no authenticated principal to attribute actions to.
@@ -136,5 +136,5 @@ These are real and worth naming rather than discovering later:
   transaction rolls back; if the publish succeeds and the transaction later fails, the event
   is already out. The fix is a transactional outbox, which is not implemented here.
 - **Redis is declared, not used.** `spring-boot-starter-data-redis` is a dependency with no
-  code behind it yet — it was added for planned priority-queue work.
+  code behind it yet. It was added for planned priority-queue work.
 - **Listing is unpaginated.** `GET /api/incidents` returns every row.
